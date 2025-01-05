@@ -6,7 +6,19 @@ struct timeval start, stop;
 #define DataType double
 #define NUM_STREAMS 4
 
-// 定义一个结构体来管理pin memory
+// Timer functions
+void start_timer() {
+    gettimeofday(&start, NULL);
+}
+
+void stop_timer(const char* message) {
+    gettimeofday(&stop, NULL);
+    double elapsedTime = (stop.tv_sec - start.tv_sec) * 1000.0;
+    elapsedTime += (stop.tv_usec - start.tv_usec) / 1000.0;
+    printf("%s: %.2f ms\n", message, elapsedTime);
+}
+
+// Pin memory pool structure
 typedef struct {
     DataType* input1;
     DataType* input2;
@@ -35,8 +47,6 @@ __global__ void vecAdd(DataType *in1, DataType *in2, DataType *out, int len) {
         out[i] = in1[i] + in2[i];
     }
 }
-
-// ... (timer functions remain the same)
 
 int main(int argc, char **argv) {
     int inputLength, segmentSize;
