@@ -2,51 +2,76 @@ import subprocess
 import numpy as np
 import matplotlib.pyplot as plt
 
-def run_with_segment_size(input_length, segment_size):
-    cmd = ["./lab4_VectorAdd_Streams", str(input_length), str(segment_size)]
+def run_cuda_program(program_path, input_length, segment_size=None):
+    if segment_size:
+        cmd = [program_path, str(input_length), str(segment_size)]
+    else:
+        cmd = [program_path, str(input_length)]
+    
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
         for line in result.stdout.split('\n'):
             if "Total execution time with streams" in line:
                 return float(line.split(':')[1].strip().split()[0])
+            elif "Time for CUDA kernel execution" in line:
+                return float(line.split(':')[1].strip().split()[0])
     except Exception as e:
         print(f"Error running CUDA program: {e}")
         return None
 
-def analyze_segment_sizes():
+def compare_performance():
     # 正确的向量长度
-    input_length = 32768
+    vector_lengths = [2048, 4096, 8192, 16384, 32768]
     
     # 不同的段大小
     segment_sizes = [2048, 4096, 8192, 16384]
     
+    # 存储结果
+    streamed_times = {size: [] for size in segment_sizes}
+    non_streamed_times = []
+    
     # 运行测试
-    execution_times = []
-    for size in segment_sizes:
-        time = run_with_segment_size(input_length, size)
-        execution_times.append(time)
-        print(f"Vector length: {input_length}, Segment size: {size}, Time: {time} ms")
+    for length in vector_lengths:
+        # 运行非流版本
+        non_stream_time = run_cuda_program('./lab2_VectorAdd_Streams', length)
+        non_streamed_times.append(non_stream_time)
+        print(f"\nVector length: {length}")
+        print(f"Non-streamed time: {non_stream_time} ms")
+        
+        # 运行不同段大小的流版本
+        for seg_size in segment_sizes:
+            if seg_size <= length:  # 只在段大小小于等于向量长度时测试
+                time = run_cuda_program('./lab4_VectorAdd_Streams', length, seg_size)
+                streamed_times[seg_size].append(time)
+                print(f"Streamed time (segment={seg_size}): {time} ms")
+            else:
+                streamed_times[seg_size].append(None)
     
     # 创建图表
-    plt.figure(figsize=(10, 6))
-    plt.plot(segment_sizes, execution_times, 'b-o', linewidth=2)
-    plt.xlabel('Segment Size')
+    plt.figure(figsize=(12, 8))
+    
+    # 绘制非流版本
+    plt.plot(vector_lengths, non_streamed_times, 'k-o', 
+             label='Non-streamed', linewidth=2)
+    
+    # 绘制不同段大小的流版本
+    colors = ['b', 'g', 'r', 'c']
+    for seg_size, color in zip(segment_sizes, colors):
+        valid_points = [(x, y) for x, y in zip(vector_lengths, streamed_times[seg_size]) if y is not None]
+        if valid_points:
+            x_vals, y_vals = zip(*valid_points)
+            plt.plot(x_vals, y_vals, f'{color}-o', 
+                    label=f'Streamed (segment={seg_size})')
+    
+    plt.xlabel('Vector Length')
     plt.ylabel('Execution Time (ms)')
-    plt.title(f'Impact of Segment Size on Performance\n(Vector Length: {input_length})')
+    plt.title('Performance Comparison: Streamed vs Non-streamed Vector Addition')
+    plt.legend()
     plt.grid(True)
-    
-    # 在数据点上添加标签
-    for i, (size, time) in enumerate(zip(segment_sizes, execution_times)):
-        plt.annotate(f'Size: {size}\nTime: {time:.2f}ms', 
-                    (size, time),
-                    textcoords="offset points",
-                    xytext=(0,10),
-                    ha='center')
-    
-    plt.savefig('segment_size_analysis.png')
+    plt.savefig('performance_comparison.png')
     plt.close()
 
 if __name__ == "__main__":
-    print("Starting segment size analysis...")
-    analyze_segment_sizes()
-    print("\nSegment size analysis completed. Check segment_size_analysis.png")
+    print("Starting performance comparison...")
+    compare_performance()
+    print("\nPerformance comparison completed. Check performance_comparison.png")
