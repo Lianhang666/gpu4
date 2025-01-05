@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def run_with_segment_size(input_length, segment_size):
-    cmd = ["./vecAdd_stream", str(input_length), str(segment_size)]
+    cmd = ["./lab4_VectorAdd_Streams", str(input_length), str(segment_size)]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
         for line in result.stdout.split('\n'):
@@ -42,6 +42,15 @@ def analyze_segment_sizes():
     plt.title('Impact of Segment Size on Performance')
     plt.grid(True)
     plt.xscale('log')
+    
+    # Add segment size labels on data points
+    for i, size in enumerate(segment_sizes):
+        plt.annotate(f'{size}', 
+                    (size, execution_times[i]),
+                    textcoords="offset points",
+                    xytext=(0,10),
+                    ha='center')
+    
     plt.savefig('segment_size_analysis.png')
     plt.close()
 
