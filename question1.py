@@ -24,7 +24,7 @@ def compare_performance():
     vector_lengths = [2000, 5000, 10000, 500000, 1000000]
     
     # 固定段大小为2048
-    segment_size = 2048
+    segment_size = 2000
     
     # 存储结果
     streamed_times = []
