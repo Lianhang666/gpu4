@@ -1,7 +1,7 @@
 import subprocess
 import os
 
-def run_nsys(cuda_program, input_length, segment_size):
+def run_nsys(cuda_program, vector_length):
     """Run nsys profile with specific parameters"""
     output_name = "report"  # 固定输出文件名
     cmd = [
@@ -10,13 +10,12 @@ def run_nsys(cuda_program, input_length, segment_size):
         "--force-overwrite=true",
         "--output", output_name,
         cuda_program,
-        str(input_length),
-        str(segment_size)
+        str(vector_length)
     ]
     
     try:
         subprocess.run(cmd, check=True)
-        print(f"\nProfile generated for input length {input_length}, segment size {segment_size}")
+        print(f"\nProfile generated for vector length {vector_length}")
     except subprocess.CalledProcessError as e:
         print(f"Error running nsys profile: {e}")
 
@@ -29,35 +28,46 @@ def clean_old_report():
         except OSError as e:
             print(f"Error removing old report: {e}")
 
-def analyze_single_scenario():
-    # 固定的测试场景
-    vector_length = 8192    # 中等大小的向量
-    segment_size = 4096     # 段大小为向量长度的一半
+def analyze_stream_performance():
+    # 使用较大的向量长度来更好地展示流的效果
+    vector_length = 1048576  # 使用1M大小的向量
     
-    print(f"\nAnalyzing vector addition...")
+    print(f"\nAnalyzing vector addition with streams...")
     print(f"Vector length: {vector_length}")
-    print(f"Segment size: {segment_size}")
+    print(f"Number of streams: 4")  # 由CUDA代码中的NUM_STREAMS定义
     
-    run_nsys("./lab4_VectorAdd_Streams", vector_length, segment_size)
+    # 运行性能分析
+    run_nsys("./lab4_VectorAdd_Streams", vector_length)
     
     print("""
 Analysis Instructions:
 1. A profile report has been generated (report.nsys-rep)
+
 2. To view the timeline visualization:
    - Use: nsys-ui report.nsys-rep
+
 3. In the Nsight Systems UI, look for:
    - CUDA API calls timeline
    - Kernel execution timeline
    - Memory operations timeline
    - Stream synchronization points
+
 4. Key aspects to analyze:
+   - H2D memory transfers (green blocks)
+   - Kernel execution (blue blocks)
+   - D2H memory transfers (red blocks)
    - Stream overlap patterns
+   - Multiple operations executing concurrently
    - Memory transfer efficiency
-   - Kernel execution parallelism
+
+5. Expected pattern:
+   - Should see overlapping of memory transfers and kernel execution
+   - Multiple streams operating concurrently
+   - Efficient utilization of hardware resources
 """)
 
 if __name__ == "__main__":
     print("Starting NSYS analysis...")
     clean_old_report()
-    analyze_single_scenario()
+    analyze_stream_performance()
     print("\nNSYS analysis completed. Use nsys-ui report.nsys-rep to view the visualization.")
