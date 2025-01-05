@@ -21,7 +21,7 @@ def run_cuda_program(program_path, input_length, segment_size=None):
 
 def compare_performance():
     # 正确的向量长度
-    vector_lengths = [2048, 4096, 8192, 16384, 32768]
+    vector_lengths = [2048]
     
     # 不同的段大小
     segment_sizes = [2048, 4096, 8192, 16384]
