@@ -1,0 +1,2 @@
+nvcc -o vecAdd_stream stream_version.cu
+nvcc -o vecAdd_non_stream non_stream_version.cu
