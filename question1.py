@@ -30,18 +30,23 @@ def compare_performance():
     
     # Run tests
     for length in vector_lengths:
-        # Run streamed version
-        stream_time = run_cuda_program('./vecAdd_stream', length, segment_size)
+        # Run lab4 version (streamed)
+        stream_time = run_cuda_program('./lab4_VectorAdd_Streams', length, segment_size)
         streamed_times.append(stream_time)
         
-        # Run non-streamed version
-        non_stream_time = run_cuda_program('./vecAdd_non_stream', length)
+        # Run lab2 version (non-streamed)
+        non_stream_time = run_cuda_program('./lab2_VectorAdd_Streams', length)
         non_streamed_times.append(non_stream_time)
+        
+        print(f"Vector length: {length}")
+        print(f"Streamed time: {stream_time} ms")
+        print(f"Non-streamed time: {non_stream_time} ms")
+        print("-" * 40)
     
     # Plot results
     plt.figure(figsize=(10, 6))
-    plt.plot(vector_lengths, non_streamed_times, 'b-o', label='Non-streamed')
-    plt.plot(vector_lengths, streamed_times, 'r-o', label='Streamed')
+    plt.plot(vector_lengths, non_streamed_times, 'b-o', label='Non-streamed (Lab2)')
+    plt.plot(vector_lengths, streamed_times, 'r-o', label='Streamed (Lab4)')
     plt.xlabel('Vector Length')
     plt.ylabel('Execution Time (ms)')
     plt.title('Performance Comparison: Streamed vs Non-streamed Vector Addition')
