@@ -20,14 +20,14 @@ def run_cuda_program(program_path, input_length, segment_size=None):
         return None
 
 def compare_performance():
-    # 正确的向量长度
+    # 向量长度范围保持不变
     vector_lengths = [2048, 4096, 8192, 16384, 32768]
     
-    # 不同的段大小
-    segment_sizes = [2048, 4096, 8192, 16384]
+    # 固定段大小为2048
+    segment_size = 2048
     
     # 存储结果
-    streamed_times = {size: [] for size in segment_sizes}
+    streamed_times = []
     non_streamed_times = []
     
     # 运行测试
@@ -38,14 +38,10 @@ def compare_performance():
         print(f"\nVector length: {length}")
         print(f"Non-streamed time: {non_stream_time} ms")
         
-        # 运行不同段大小的流版本
-        for seg_size in segment_sizes:
-            if seg_size <= length:  # 只在段大小小于等于向量长度时测试
-                time = run_cuda_program('./lab4_VectorAdd_Streams', length, seg_size)
-                streamed_times[seg_size].append(time)
-                print(f"Streamed time (segment={seg_size}): {time} ms")
-            else:
-                streamed_times[seg_size].append(None)
+        # 运行流版本（固定段大小为2048）
+        time = run_cuda_program('./lab4_VectorAdd_Streams', length, segment_size)
+        streamed_times.append(time)
+        print(f"Streamed time (segment=2048): {time} ms")
     
     # 创建图表
     plt.figure(figsize=(12, 8))
@@ -54,14 +50,9 @@ def compare_performance():
     plt.plot(vector_lengths, non_streamed_times, 'k-o', 
              label='Non-streamed', linewidth=2)
     
-    # 绘制不同段大小的流版本
-    colors = ['b', 'g', 'r', 'c']
-    for seg_size, color in zip(segment_sizes, colors):
-        valid_points = [(x, y) for x, y in zip(vector_lengths, streamed_times[seg_size]) if y is not None]
-        if valid_points:
-            x_vals, y_vals = zip(*valid_points)
-            plt.plot(x_vals, y_vals, f'{color}-o', 
-                    label=f'Streamed (segment={seg_size})')
+    # 绘制流版本（只有2048段大小）
+    plt.plot(vector_lengths, streamed_times, 'b-o', 
+             label='Streamed (segment=2048)', linewidth=2)
     
     plt.xlabel('Vector Length')
     plt.ylabel('Execution Time (ms)')
