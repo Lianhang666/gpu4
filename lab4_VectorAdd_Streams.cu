@@ -39,63 +39,80 @@ int main(int argc, char **argv) {
     }
     printf("The input length is %d, segment size is %d\n", inputLength, segmentSize);
 
-    // Allocate host memory - using same allocation as lab2
-    hostInput1 = (DataType*)malloc(inputLength * sizeof(DataType));
-    hostInput2 = (DataType*)malloc(inputLength * sizeof(DataType));
-    hostOutput = (DataType*)malloc(inputLength * sizeof(DataType));
-    resultRef = (DataType*)malloc(inputLength * sizeof(DataType));
+    // 分配页锁定内存
+    cudaMallocHost(&hostInput1, inputLength * sizeof(DataType));
+    cudaMallocHost(&hostInput2, inputLength * sizeof(DataType));
+    cudaMallocHost(&hostOutput, inputLength * sizeof(DataType));
+    resultRef = (DataType*)malloc(inputLength * sizeof(DataType));  // 参考结果可以使用普通内存
 
-    // Initialize input arrays - same as lab2
+    // 初始化输入数组
     for (int i = 0; i < inputLength; i++) {
         hostInput1[i] = rand() % 100;
         hostInput2[i] = rand() % 100;
         resultRef[i] = hostInput1[i] + hostInput2[i];
     }
 
-    // Allocate GPU memory - same as lab2
-    cudaMalloc((void**)&deviceInput1, inputLength * sizeof(DataType));
-    cudaMalloc((void**)&deviceInput2, inputLength * sizeof(DataType));
-    cudaMalloc((void**)&deviceOutput, inputLength * sizeof(DataType));
+    // 分配GPU内存
+    cudaMalloc(&deviceInput1, inputLength * sizeof(DataType));
+    cudaMalloc(&deviceInput2, inputLength * sizeof(DataType));
+    cudaMalloc(&deviceOutput, inputLength * sizeof(DataType));
 
-    // Create streams
+    // 创建CUDA流
     cudaStream_t streams[NUM_STREAMS];
     for (int i = 0; i < NUM_STREAMS; i++) {
         cudaStreamCreate(&streams[i]);
     }
 
-    // Start timer for memory copy and computation
-    start_timer();
-    
+    // 计算每个流处理的段大小
+    int segmentsPerStream = (inputLength + segmentSize - 1) / segmentSize;
     int threadsPerBlock = 256;
-    // Process data in segments using streams
-    for (int i = 0; i < inputLength; i += segmentSize) {
-        int currentSize = min(segmentSize, inputLength - i);
+
+    start_timer();
+
+    // Stage 1: 所有Host to Device传输
+    for (int i = 0; i < segmentsPerStream; i++) {
+        int offset = i * segmentSize;
+        int currentSize = min(segmentSize, inputLength - offset);
+        int streamIdx = i % NUM_STREAMS;
+
+        cudaMemcpyAsync(deviceInput1 + offset, hostInput1 + offset,
+                       currentSize * sizeof(DataType), cudaMemcpyHostToDevice,
+                       streams[streamIdx]);
+        cudaMemcpyAsync(deviceInput2 + offset, hostInput2 + offset,
+                       currentSize * sizeof(DataType), cudaMemcpyHostToDevice,
+                       streams[streamIdx]);
+    }
+
+    // Stage 2: 所有kernel执行
+    for (int i = 0; i < segmentsPerStream; i++) {
+        int offset = i * segmentSize;
+        int currentSize = min(segmentSize, inputLength - offset);
+        int streamIdx = i % NUM_STREAMS;
         int blocksPerGrid = (currentSize + threadsPerBlock - 1) / threadsPerBlock;
-        int streamIdx = (i / segmentSize) % NUM_STREAMS;
 
-        // Asynchronous memory copy to device
-        cudaMemcpyAsync(deviceInput1 + i, hostInput1 + i,
-                       currentSize * sizeof(DataType), cudaMemcpyHostToDevice,
-                       streams[streamIdx]);
-        cudaMemcpyAsync(deviceInput2 + i, hostInput2 + i,
-                       currentSize * sizeof(DataType), cudaMemcpyHostToDevice,
-                       streams[streamIdx]);
-
-        // Launch kernel
         vecAdd<<<blocksPerGrid, threadsPerBlock, 0, streams[streamIdx]>>>
-            (deviceInput1 + i, deviceInput2 + i, deviceOutput + i, currentSize);
+            (deviceInput1 + offset, deviceInput2 + offset, deviceOutput + offset, currentSize);
+    }
 
-        // Asynchronous memory copy back to host
-        cudaMemcpyAsync(hostOutput + i, deviceOutput + i,
+    // Stage 3: 所有Device to Host传输
+    for (int i = 0; i < segmentsPerStream; i++) {
+        int offset = i * segmentSize;
+        int currentSize = min(segmentSize, inputLength - offset);
+        int streamIdx = i % NUM_STREAMS;
+
+        cudaMemcpyAsync(hostOutput + offset, deviceOutput + offset,
                        currentSize * sizeof(DataType), cudaMemcpyDeviceToHost,
                        streams[streamIdx]);
     }
 
-    // Synchronize all streams
-    cudaDeviceSynchronize();
+    // 同步所有流
+    for (int i = 0; i < NUM_STREAMS; i++) {
+        cudaStreamSynchronize(streams[i]);
+    }
+
     stop_timer("Total execution time with streams");
 
-    // Verify results - same as lab2
+    // 验证结果
     bool match = true;
     for (int i = 0; i < inputLength; i++) {
         if (fabs(hostOutput[i] - resultRef[i]) > 1e-5) {
@@ -107,16 +124,20 @@ int main(int argc, char **argv) {
     }
     printf(match ? "Results match.\n" : "Results do not match.\n");
 
-    // Cleanup
+    // 清理资源
     for (int i = 0; i < NUM_STREAMS; i++) {
         cudaStreamDestroy(streams[i]);
     }
+
+    // 释放GPU内存
     cudaFree(deviceInput1);
     cudaFree(deviceInput2);
     cudaFree(deviceOutput);
-    free(hostInput1);
-    free(hostInput2);
-    free(hostOutput);
+
+    // 释放CPU内存
+    cudaFreeHost(hostInput1);
+    cudaFreeHost(hostInput2);
+    cudaFreeHost(hostOutput);
     free(resultRef);
 
     return 0;
