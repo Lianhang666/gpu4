@@ -1,2 +1,2 @@
-nvcc -o vecAdd_stream stream_version.cu
-nvcc -o vecAdd_non_stream non_stream_version.cu
+nvcc -o lab2_VectorAdd_Streams lab2_VectorAdd_Streams.cu
+nvcc -o lab4_VectorAdd_Streams lab4_VectorAdd_Streams.cu
