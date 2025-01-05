@@ -6,7 +6,13 @@ struct timeval start, stop;
 #define DataType double
 #define NUM_STREAMS 4
 
-// Timer functions
+__global__ void vecAdd(DataType *in1, DataType *in2, DataType *out, int len) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < len) {
+        out[i] = in1[i] + in2[i];
+    }
+}
+
 void start_timer() {
     gettimeofday(&start, NULL);
 }
@@ -18,132 +24,112 @@ void stop_timer(const char* message) {
     printf("%s: %.2f ms\n", message, elapsedTime);
 }
 
-// Pin memory pool structure
 typedef struct {
     DataType* input1;
     DataType* input2;
     DataType* output;
-    size_t size;
-} PinnedMemoryPool;
+} MemoryPool;
 
-// 初始化pin memory池
-void initPinnedMemoryPool(PinnedMemoryPool* pool, size_t size) {
-    pool->size = size;
-    cudaMallocHost(&pool->input1, size * sizeof(DataType));
-    cudaMallocHost(&pool->input2, size * sizeof(DataType));
-    cudaMallocHost(&pool->output, size * sizeof(DataType));
+void initMemoryPool(MemoryPool* pool, int vectorLength) {
+    cudaMallocHost(&pool->input1, vectorLength * sizeof(DataType));
+    cudaMallocHost(&pool->input2, vectorLength * sizeof(DataType));
+    cudaMallocHost(&pool->output, vectorLength * sizeof(DataType));
 }
 
-// 释放pin memory池
-void freePinnedMemoryPool(PinnedMemoryPool* pool) {
+void freeMemoryPool(MemoryPool* pool) {
     cudaFreeHost(pool->input1);
     cudaFreeHost(pool->input2);
     cudaFreeHost(pool->output);
 }
 
-__global__ void vecAdd(DataType *in1, DataType *in2, DataType *out, int len) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < len) {
-        out[i] = in1[i] + in2[i];
-    }
-}
-
 int main(int argc, char **argv) {
-    int inputLength, segmentSize;
-    DataType *deviceInput1, *deviceInput2, *deviceOutput;
-    DataType *resultRef;
-
-    // 参数检查
-    if (argc > 2) {
-        inputLength = atoi(argv[1]);
-        segmentSize = atoi(argv[2]);
-    } else {
-        printf("Usage: %s <input_length> <segment_size>\n", argv[0]);
+    if (argc != 2) {
+        printf("Usage: %s <vector_length>\n", argv[0]);
         return 1;
     }
 
-    // 对齐段大小
-    segmentSize = (segmentSize + 255) & ~255;
-    printf("Input length: %d, Adjusted segment size: %d\n", inputLength, segmentSize);
-
-    // 初始化pin memory池
-    PinnedMemoryPool memPool;
-    initPinnedMemoryPool(&memPool, inputLength);
+    int vectorLength = atoi(argv[1]);
+    int segmentSize = vectorLength / NUM_STREAMS;
     
-    // 分配参考内存（不需要pin）
-    resultRef = (DataType*)malloc(inputLength * sizeof(DataType));
+    printf("Vector Length: %d, Segment Size: %d\n", vectorLength, segmentSize);
+
+    DataType *deviceInput1, *deviceInput2, *deviceOutput;
+    DataType *resultRef;
+    
+    // 初始化内存池
+    MemoryPool pool;
+    initMemoryPool(&pool, vectorLength);
+    resultRef = (DataType*)malloc(vectorLength * sizeof(DataType));
 
     // 初始化数据
-    for (int i = 0; i < inputLength; i++) {
-        memPool.input1[i] = rand() % 100;
-        memPool.input2[i] = rand() % 100;
-        resultRef[i] = memPool.input1[i] + memPool.input2[i];
+    for (int i = 0; i < vectorLength; i++) {
+        pool.input1[i] = rand() % 100;
+        pool.input2[i] = rand() % 100;
+        resultRef[i] = pool.input1[i] + pool.input2[i];
     }
 
     // 分配GPU内存
-    cudaMalloc(&deviceInput1, inputLength * sizeof(DataType));
-    cudaMalloc(&deviceInput2, inputLength * sizeof(DataType));
-    cudaMalloc(&deviceOutput, inputLength * sizeof(DataType));
+    cudaMalloc(&deviceInput1, vectorLength * sizeof(DataType));
+    cudaMalloc(&deviceInput2, vectorLength * sizeof(DataType));
+    cudaMalloc(&deviceOutput, vectorLength * sizeof(DataType));
 
-    // 创建CUDA流和事件
+    // 创建CUDA流
     cudaStream_t streams[NUM_STREAMS];
-    cudaEvent_t events[NUM_STREAMS];
     for (int i = 0; i < NUM_STREAMS; i++) {
         cudaStreamCreate(&streams[i]);
-        cudaEventCreate(&events[i]);
     }
 
     int threadsPerBlock = 256;
+    int blocksPerSegment = (segmentSize + threadsPerBlock - 1) / threadsPerBlock;
+
     start_timer();
 
-    // 划分数据并处理
+    // Stage 1: 批量H2D传输
     for (int i = 0; i < NUM_STREAMS; i++) {
-        int offset = i * (inputLength / NUM_STREAMS);
-        int currentSize = (i == NUM_STREAMS - 1) ? 
-            (inputLength - offset) : (inputLength / NUM_STREAMS);
-
-        // H2D阶段
+        int offset = i * segmentSize;
+        
         cudaMemcpyAsync(deviceInput1 + offset, 
-                       memPool.input1 + offset,
-                       currentSize * sizeof(DataType),
+                       pool.input1 + offset,
+                       segmentSize * sizeof(DataType),
                        cudaMemcpyHostToDevice, 
                        streams[i]);
         cudaMemcpyAsync(deviceInput2 + offset, 
-                       memPool.input2 + offset,
-                       currentSize * sizeof(DataType),
+                       pool.input2 + offset,
+                       segmentSize * sizeof(DataType),
                        cudaMemcpyHostToDevice, 
                        streams[i]);
+    }
 
-        // Kernel阶段
-        int blocksPerGrid = (currentSize + threadsPerBlock - 1) / threadsPerBlock;
-        vecAdd<<<blocksPerGrid, threadsPerBlock, 0, streams[i]>>>
+    // Stage 2: 批量kernel执行
+    for (int i = 0; i < NUM_STREAMS; i++) {
+        int offset = i * segmentSize;
+        
+        vecAdd<<<blocksPerSegment, threadsPerBlock, 0, streams[i]>>>
             (deviceInput1 + offset, deviceInput2 + offset,
-             deviceOutput + offset, currentSize);
+             deviceOutput + offset, segmentSize);
+    }
 
-        // D2H阶段
-        cudaMemcpyAsync(memPool.output + offset, 
+    // Stage 3: 批量D2H传输
+    for (int i = 0; i < NUM_STREAMS; i++) {
+        int offset = i * segmentSize;
+        
+        cudaMemcpyAsync(pool.output + offset, 
                        deviceOutput + offset,
-                       currentSize * sizeof(DataType),
+                       segmentSize * sizeof(DataType),
                        cudaMemcpyDeviceToHost, 
                        streams[i]);
-
-        // 记录事件
-        cudaEventRecord(events[i], streams[i]);
     }
 
-    // 等待所有事件完成
-    for (int i = 0; i < NUM_STREAMS; i++) {
-        cudaEventSynchronize(events[i]);
-    }
-
+    // 最后统一同步
+    cudaDeviceSynchronize();
     stop_timer("Total execution time with streams");
 
     // 验证结果
     bool match = true;
-    for (int i = 0; i < inputLength; i++) {
-        if (fabs(memPool.output[i] - resultRef[i]) > 1e-5) {
+    for (int i = 0; i < vectorLength; i++) {
+        if (fabs(pool.output[i] - resultRef[i]) > 1e-5) {
             printf("Mismatch at index %d: GPU = %f, CPU = %f\n",
-                   i, memPool.output[i], resultRef[i]);
+                   i, pool.output[i], resultRef[i]);
             match = false;
             break;
         }
@@ -152,14 +138,13 @@ int main(int argc, char **argv) {
 
     // 清理资源
     for (int i = 0; i < NUM_STREAMS; i++) {
-        cudaEventDestroy(events[i]);
         cudaStreamDestroy(streams[i]);
     }
 
     cudaFree(deviceInput1);
     cudaFree(deviceInput2);
     cudaFree(deviceOutput);
-    freePinnedMemoryPool(&memPool);
+    freeMemoryPool(&pool);
     free(resultRef);
 
     return 0;
